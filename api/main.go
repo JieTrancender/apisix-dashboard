@@ -30,8 +30,7 @@ import (
 )
 
 func main() {
-
-	if err := storage.InitETCDClient(conf.ETCDEndpoints); err != nil {
+	if err := storage.InitETCDClient(conf.ETCDConfig); err != nil {
 		log.Errorf("init etcd client fail: %w", err)
 		panic(err)
 	}
