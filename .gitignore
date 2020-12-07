@@ -45,3 +45,8 @@ output
 default.etcd
 api/build-tools/apisix
 /*.zip
+api/coverage.txt
+
+# lua
+api/dag-to-lua
+
