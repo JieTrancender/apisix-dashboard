@@ -21,19 +21,21 @@ import (
 	"reflect"
 
 	"github.com/apisix/manager-api/internal/core/entity"
+	"github.com/apisix/manager-api/internal/log"
 	"github.com/apisix/manager-api/internal/utils"
-	"github.com/apisix/manager-api/log"
 )
 
 type HubKey string
 
 const (
-	HubKeyConsumer HubKey = "consumer"
-	HubKeyRoute    HubKey = "route"
-	HubKeyService  HubKey = "service"
-	HubKeySsl      HubKey = "ssl"
-	HubKeyUpstream HubKey = "upstream"
-	HubKeyScript   HubKey = "script"
+	HubKeyConsumer   HubKey = "consumer"
+	HubKeyRoute      HubKey = "route"
+	HubKeyService    HubKey = "service"
+	HubKeySsl        HubKey = "ssl"
+	HubKeyUpstream   HubKey = "upstream"
+	HubKeyScript     HubKey = "script"
+	HubKeyGlobalRule HubKey = "global_rule"
+	HubKeyServerInfo HubKey = "server_info"
 )
 
 var (
@@ -41,8 +43,15 @@ var (
 )
 
 func InitStore(key HubKey, opt GenericStoreOption) error {
-	if key == HubKeyConsumer || key == HubKeyRoute ||
-		key == HubKeyService || key == HubKeySsl || key == HubKeyUpstream {
+	hubsNeedCheck := map[HubKey]bool{
+		HubKeyConsumer:   true,
+		HubKeyRoute:      true,
+		HubKeySsl:        true,
+		HubKeyService:    true,
+		HubKeyUpstream:   true,
+		HubKeyGlobalRule: true,
+	}
+	if _, ok := hubsNeedCheck[key]; ok {
 		validator, err := NewAPISIXJsonSchemaValidator("main." + string(key))
 		if err != nil {
 			return err
@@ -51,11 +60,11 @@ func InitStore(key HubKey, opt GenericStoreOption) error {
 	}
 	s, err := NewGenericStore(opt)
 	if err != nil {
-		log.Warnf("NewGenericStore error: %w", err)
+		log.Errorf("NewGenericStore error: %s", err)
 		return err
 	}
 	if err := s.Init(); err != nil {
-		log.Warnf("GenericStore init error: %w", err)
+		log.Errorf("GenericStore init error: %s", err)
 		return err
 	}
 
@@ -138,6 +147,30 @@ func InitStores() error {
 		KeyFunc: func(obj interface{}) string {
 			r := obj.(*entity.Script)
 			return r.ID
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	err = InitStore(HubKeyGlobalRule, GenericStoreOption{
+		BasePath: "/apisix/global_rules",
+		ObjType:  reflect.TypeOf(entity.GlobalPlugins{}),
+		KeyFunc: func(obj interface{}) string {
+			r := obj.(*entity.GlobalPlugins)
+			return utils.InterfaceToString(r.ID)
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	err = InitStore(HubKeyServerInfo, GenericStoreOption{
+		BasePath: "/apisix/data_plane/server_info",
+		ObjType:  reflect.TypeOf(entity.ServerInfo{}),
+		KeyFunc: func(obj interface{}) string {
+			r := obj.(*entity.ServerInfo)
+			return utils.InterfaceToString(r.ID)
 		},
 	})
 	if err != nil {

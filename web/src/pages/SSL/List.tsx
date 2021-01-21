@@ -16,7 +16,8 @@
  */
 import React, { useRef } from 'react';
 import { PageHeaderWrapper } from '@ant-design/pro-layout';
-import ProTable, { ProColumns, ActionType } from '@ant-design/pro-table';
+import ProTable from '@ant-design/pro-table';
+import type { ProColumns, ActionType } from '@ant-design/pro-table';
 import { Button, Popconfirm, notification, Tag } from 'antd';
 import { useIntl, history } from 'umi';
 import { PlusOutlined } from '@ant-design/icons';
@@ -106,6 +107,10 @@ const Page: React.FC = () => {
         columns={columns}
         actionRef={tableRef}
         request={fetchList}
+        search={{
+          searchText: formatMessage({ id: 'component.global.search' }),
+          resetText: formatMessage({ id: 'component.global.reset' }),
+        }}
         toolBarRender={() => [
           <Button type="primary" onClick={() => history.push(`/ssl/create`)}>
             <PlusOutlined />

@@ -30,15 +30,15 @@ import (
 
 	"github.com/apisix/manager-api/internal/core/entity"
 	"github.com/apisix/manager-api/internal/core/storage"
+	"github.com/apisix/manager-api/internal/log"
 	"github.com/apisix/manager-api/internal/utils"
-	"github.com/apisix/manager-api/log"
 )
 
 type Interface interface {
-	Get(key string) (interface{}, error)
-	List(input ListInput) (*ListOutput, error)
-	Create(ctx context.Context, obj interface{}) error
-	Update(ctx context.Context, obj interface{}, createOnFail bool) error
+	Get(ctx context.Context, key string) (interface{}, error)
+	List(ctx context.Context, input ListInput) (*ListOutput, error)
+	Create(ctx context.Context, obj interface{}) (interface{}, error)
+	Update(ctx context.Context, obj interface{}, createIfNotExist bool) (interface{}, error)
 	BatchDelete(ctx context.Context, keys []string) error
 }
 
@@ -61,15 +61,15 @@ type GenericStoreOption struct {
 
 func NewGenericStore(opt GenericStoreOption) (*GenericStore, error) {
 	if opt.BasePath == "" {
-		log.Warn("base path empty")
+		log.Error("base path empty")
 		return nil, fmt.Errorf("base path can not be empty")
 	}
 	if opt.ObjType == nil {
-		log.Warn("object type is nil")
+		log.Errorf("object type is nil")
 		return nil, fmt.Errorf("object type can not be nil")
 	}
 	if opt.KeyFunc == nil {
-		log.Warn("key func is nil")
+		log.Error("key func is nil")
 		return nil, fmt.Errorf("key func can not be nil")
 	}
 
@@ -77,13 +77,13 @@ func NewGenericStore(opt GenericStoreOption) (*GenericStore, error) {
 		opt.ObjType = opt.ObjType.Elem()
 	}
 	if opt.ObjType.Kind() != reflect.Struct {
-		log.Warn("obj type is invalid")
+		log.Error("obj type is invalid")
 		return nil, fmt.Errorf("obj type is invalid")
 	}
 	s := &GenericStore{
 		opt: opt,
 	}
-	s.Stg = &storage.EtcdV3Storage{}
+	s.Stg = storage.GenEtcdStorage()
 
 	return s, nil
 }
@@ -96,13 +96,15 @@ func (s *GenericStore) Init() error {
 		return err
 	}
 	for i := range ret {
-		if ret[i] == "init_dir" {
+		if ret[i].Value == "init_dir" {
 			continue
 		}
-		objPtr, err := s.StringToObjPtr(ret[i])
+		key := ret[i].Key[len(s.opt.BasePath)+1:]
+		objPtr, err := s.StringToObjPtr(ret[i].Value, key)
 		if err != nil {
 			return err
 		}
+
 		s.cache.Store(s.opt.KeyFunc(objPtr), objPtr)
 	}
 
@@ -111,18 +113,19 @@ func (s *GenericStore) Init() error {
 	go func() {
 		for event := range ch {
 			if event.Canceled {
-				log.Warnf("watch failed: %w", event.Error)
+				log.Warnf("watch failed: %s", event.Error)
 			}
 
 			for i := range event.Events {
 				switch event.Events[i].Type {
 				case storage.EventTypePut:
-					objPtr, err := s.StringToObjPtr(event.Events[i].Value)
+					key := event.Events[i].Key[len(s.opt.BasePath)+1:]
+					objPtr, err := s.StringToObjPtr(event.Events[i].Value, key)
 					if err != nil {
-						log.Warnf("value convert to obj failed: %w", err)
+						log.Warnf("value convert to obj failed: %s", err)
 						continue
 					}
-					s.cache.Store(event.Events[i].Key[len(s.opt.BasePath)+1:], objPtr)
+					s.cache.Store(key, objPtr)
 				case storage.EventTypeDelete:
 					s.cache.Delete(event.Events[i].Key[len(s.opt.BasePath)+1:])
 				}
@@ -133,7 +136,7 @@ func (s *GenericStore) Init() error {
 	return nil
 }
 
-func (s *GenericStore) Get(key string) (interface{}, error) {
+func (s *GenericStore) Get(_ context.Context, key string) (interface{}, error) {
 	ret, ok := s.cache.Load(key)
 	if !ok {
 		log.Warnf("data not found by key: %s", key)
@@ -170,7 +173,7 @@ var defLessFunc = func(i, j interface{}) bool {
 	return iID < jID
 }
 
-func (s *GenericStore) List(input ListInput) (*ListOutput, error) {
+func (s *GenericStore) List(_ context.Context, input ListInput) (*ListOutput, error) {
 	var ret []interface{}
 	s.cache.Range(func(key, value interface{}) bool {
 		if input.Predicate != nil && !input.Predicate(value) {
@@ -221,7 +224,7 @@ func (s *GenericStore) List(input ListInput) (*ListOutput, error) {
 func (s *GenericStore) ingestValidate(obj interface{}) (err error) {
 	if s.opt.Validator != nil {
 		if err := s.opt.Validator.Validate(obj); err != nil {
-			log.Infof("data validate fail: %w", err)
+			log.Errorf("data validate failed: %s", err)
 			return err
 		}
 	}
@@ -237,46 +240,46 @@ func (s *GenericStore) ingestValidate(obj interface{}) (err error) {
 	return err
 }
 
-func (s *GenericStore) Create(ctx context.Context, obj interface{}) error {
+func (s *GenericStore) Create(ctx context.Context, obj interface{}) (interface{}, error) {
 	if setter, ok := obj.(entity.BaseInfoSetter); ok {
 		info := setter.GetBaseInfo()
 		info.Creating()
 	}
 
 	if err := s.ingestValidate(obj); err != nil {
-		return err
+		return nil, err
 	}
 
 	key := s.opt.KeyFunc(obj)
 	if key == "" {
-		return fmt.Errorf("key is required")
+		return nil, fmt.Errorf("key is required")
 	}
 	_, ok := s.cache.Load(key)
 	if ok {
 		log.Warnf("key: %s is conflicted", key)
-		return fmt.Errorf("key: %s is conflicted", key)
+		return nil, fmt.Errorf("key: %s is conflicted", key)
 	}
 
 	bs, err := json.Marshal(obj)
 	if err != nil {
-		log.Warnf("json marshal failed: %s", err)
-		return fmt.Errorf("json marshal failed: %s", err)
+		log.Errorf("json marshal failed: %s", err)
+		return nil, fmt.Errorf("json marshal failed: %s", err)
 	}
 	if err := s.Stg.Create(ctx, s.GetObjStorageKey(obj), string(bs)); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return obj, nil
 }
 
-func (s *GenericStore) Update(ctx context.Context, obj interface{}, createIfNotExist bool) error {
+func (s *GenericStore) Update(ctx context.Context, obj interface{}, createIfNotExist bool) (interface{}, error) {
 	if err := s.ingestValidate(obj); err != nil {
-		return err
+		return nil, err
 	}
 
 	key := s.opt.KeyFunc(obj)
 	if key == "" {
-		return fmt.Errorf("key is required")
+		return nil, fmt.Errorf("key is required")
 	}
 	storedObj, ok := s.cache.Load(key)
 	if !ok {
@@ -284,7 +287,7 @@ func (s *GenericStore) Update(ctx context.Context, obj interface{}, createIfNotE
 			return s.Create(ctx, obj)
 		}
 		log.Warnf("key: %s is not found", key)
-		return fmt.Errorf("key: %s is not found", key)
+		return nil, fmt.Errorf("key: %s is not found", key)
 	}
 
 	if setter, ok := obj.(entity.BaseInfoGetter); ok {
@@ -296,14 +299,14 @@ func (s *GenericStore) Update(ctx context.Context, obj interface{}, createIfNotE
 
 	bs, err := json.Marshal(obj)
 	if err != nil {
-		log.Warnf("json marshal failed: %s", err)
-		return fmt.Errorf("json marshal failed: %s", err)
+		log.Errorf("json marshal failed: %s", err)
+		return nil, fmt.Errorf("json marshal failed: %s", err)
 	}
 	if err := s.Stg.Update(ctx, s.GetObjStorageKey(obj), string(bs)); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return obj, nil
 }
 
 func (s *GenericStore) BatchDelete(ctx context.Context, keys []string) error {
@@ -320,15 +323,21 @@ func (s *GenericStore) Close() error {
 	return nil
 }
 
-func (s *GenericStore) StringToObjPtr(str string) (interface{}, error) {
+func (s *GenericStore) StringToObjPtr(str, key string) (interface{}, error) {
 	objPtr := reflect.New(s.opt.ObjType)
-	err := json.Unmarshal([]byte(str), objPtr.Interface())
+	ret := objPtr.Interface()
+	err := json.Unmarshal([]byte(str), ret)
 	if err != nil {
-		log.Warnf("json marshal failed: %s", err)
-		return nil, fmt.Errorf("json unmarshal failed: %w", err)
+		log.Errorf("json marshal failed: %s", err)
+		return nil, fmt.Errorf("json unmarshal failed: %s", err)
 	}
 
-	return objPtr.Interface(), nil
+	if setter, ok := ret.(entity.BaseInfoSetter); ok {
+		info := setter.GetBaseInfo()
+		info.KeyCompat(key)
+	}
+
+	return ret, nil
 }
 
 func (s *GenericStore) GetObjStorageKey(obj interface{}) string {

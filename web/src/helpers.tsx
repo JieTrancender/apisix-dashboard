@@ -16,44 +16,60 @@
  */
 import React from 'react';
 import { notification } from 'antd';
-import { MenuDataItem } from '@ant-design/pro-layout';
+import type { MenuDataItem } from '@ant-design/pro-layout';
 import { history } from 'umi';
 import moment from 'moment';
 
+
 import { codeMessage } from './constants';
-import IconFont from './iconfont';
+import IconFont from './components/IconFont';
 
 export const getMenuData = (): MenuDataItem[] => {
   return [
     {
       name: 'metrics',
       path: '/metrics',
-      icon: <IconFont type="icondashboard" />,
+      icon: <IconFont name="icondashboard" />,
+    },
+    {
+      name: 'service',
+      path: '/service/list',
+      icon: <IconFont name="iconconsumer" />,
     },
     {
       name: 'routes',
       path: '/routes/list',
-      icon: <IconFont type="iconroute" />,
-    },
-    {
-      name: 'ssl',
-      path: '/ssl/list',
-      icon: <IconFont type="iconSSLshuzizhengshu" />,
+      icon: <IconFont name="iconroute" />,
     },
     {
       name: 'upstream',
       path: '/upstream/list',
-      icon: <IconFont type="iconupstream" />,
+      icon: <IconFont name="iconserver" />,
     },
     {
       name: 'consumer',
       path: '/consumer/list',
-      icon: <IconFont type="iconfuwuliebiao" />,
+      icon: <IconFont name="iconconsumer" />,
+    },
+    {
+      name: 'plugin',
+      path: '/plugin/list',
+      icon: <IconFont name="iconconsumer" />,
+    },
+    {
+      name: 'ssl',
+      path: '/ssl/list',
+      icon: <IconFont name="iconssl" />,
     },
     {
       name: 'setting',
       path: '/settings',
-      icon: <IconFont type="iconsetting" />,
+      icon: <IconFont name="iconsetting" />,
+    },
+    {
+      name: 'serverinfo',
+      path: '/serverinfo',
+      icon: <IconFont name="iconinfocircle"/>,
     },
   ];
 };
@@ -66,6 +82,20 @@ export const isLoginPage = () => window.location.pathname.indexOf('/user/login')
 export const errorHandler = (error: { response: Response; data: any }): Promise<Response> => {
   const { response } = error;
   if (error && response && response.status) {
+    // handle global rules
+    if ([404].includes(response.status) && response.url.includes('/global_rules/')) {
+      const responseCloned = { ...response } as any;
+      responseCloned.status = 200;
+      responseCloned.data = {
+        code: 0,
+        message: '',
+        data: {
+          plugins: {},
+        },
+      };
+      return Promise.resolve(responseCloned);
+    }
+
     if ([401].includes(response.status) && !isLoginPage()) {
       history.replace(`/user/logout?redirect=${encodeURIComponent(window.location.pathname)}`);
       return Promise.reject(response);
@@ -101,8 +131,8 @@ export const getUrlQuery: (key: string) => string | false = (key: string) => {
 export const timestampToLocaleString = (timestamp: number) => {
   if (!timestamp) {
     // TODO: i18n
-    return "None"
+    return 'None';
   }
 
-  return moment.unix(timestamp).format('YYYY-MM-DD HH:mm:ss')
-}
+  return moment.unix(timestamp).format('YYYY-MM-DD HH:mm:ss');
+};

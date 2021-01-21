@@ -19,7 +19,9 @@
 
 # Building and Launching with Docker
 
-To build a Dashboard with Docker, you simply download the `Dockerfile` file from the **root directory** to your device (no need to download all source codes) then follow this guide.
+**NOTE:** We support Docker Image, please visit [DockerHub](https://hub.docker.com/r/apache/apisix-dashboard) for more information. The following steps are for building Docker Image manually.
+
+To build the Dashboard with Docker, you simply download the `Dockerfile` file from the **root directory** to your device (no need to download all source codes) then follow this guide.
 
 The `manager-api` and `web` will be included in this build guide product.
 
@@ -39,8 +41,8 @@ $ docker build -t apisix-dashboard:$tag .
 # For users in mainland China, the `ENABLE_PROXY` parameter can be provided to speed up module downloads.
 $ docker build -t apisix-dashboard:$tag . --build-arg ENABLE_PROXY=true
 
-# If you want to use the latest codes to build, you can specify the `APISIX_DASHBOARD_VERSION` parameter to `master`. 
-# This parameter can also be specified as branch name of a specific version, such as `v2.0`.
+# If you want to use the latest codes to build, you can specify the `APISIX_DASHBOARD_VERSION` parameter to `master`.
+# This parameter can also be specified as branch name of a specific version, such as `v2.1.1`.
 $ docker build -t apisix-dashboard:$tag . --build-arg APISIX_DASHBOARD_VERSION=master
 ```
 

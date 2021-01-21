@@ -19,7 +19,7 @@ import { Result, Button } from 'antd';
 import { history, useIntl } from 'umi';
 
 type Props = {
-  createNew(): void;
+  createNew: () => void;
 };
 
 const ResultView: React.FC<Props> = (props) => {
@@ -27,7 +27,7 @@ const ResultView: React.FC<Props> = (props) => {
   return (
     <Result
       status="success"
-      title={`${formatMessage({ id: 'component.global.submit' })}${formatMessage({
+      title={`${formatMessage({ id: 'component.global.submit' })} ${formatMessage({
         id: 'component.status.success',
       })}`}
       extra={[

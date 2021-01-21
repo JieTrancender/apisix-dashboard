@@ -27,17 +27,17 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/api7/go-jsonpatch"
 	"github.com/gin-gonic/gin"
 	"github.com/shiningrush/droplet"
 	"github.com/shiningrush/droplet/data"
 	"github.com/shiningrush/droplet/wrapper"
 	wgin "github.com/shiningrush/droplet/wrapper/gin"
 
-	"github.com/apisix/manager-api/conf"
+	"github.com/apisix/manager-api/internal/conf"
 	"github.com/apisix/manager-api/internal/core/entity"
 	"github.com/apisix/manager-api/internal/core/store"
 	"github.com/apisix/manager-api/internal/handler"
+	"github.com/apisix/manager-api/internal/utils"
 	"github.com/apisix/manager-api/internal/utils/consts"
 )
 
@@ -62,12 +62,13 @@ func (h *Handler) ApplyRoute(r *gin.Engine) {
 		wrapper.InputType(reflect.TypeOf(UpdateInput{}))))
 	r.PUT("/apisix/admin/ssl/:id", wgin.Wraps(h.Update,
 		wrapper.InputType(reflect.TypeOf(UpdateInput{}))))
-	r.PATCH("/apisix/admin/ssl/:id", wgin.Wraps(h.Patch,
-		wrapper.InputType(reflect.TypeOf(UpdateInput{}))))
 	r.DELETE("/apisix/admin/ssl/:ids", wgin.Wraps(h.BatchDelete,
 		wrapper.InputType(reflect.TypeOf(BatchDelete{}))))
 	r.POST("/apisix/admin/check_ssl_cert", wgin.Wraps(h.Validate,
 		wrapper.InputType(reflect.TypeOf(entity.SSL{}))))
+
+	r.PATCH("/apisix/admin/ssl/:id", consts.ErrorWrapper(Patch))
+	r.PATCH("/apisix/admin/ssl/:id/*path", consts.ErrorWrapper(Patch))
 
 	r.POST("/apisix/admin/check_ssl_exists", consts.ErrorWrapper(Exist))
 }
@@ -79,13 +80,17 @@ type GetInput struct {
 func (h *Handler) Get(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*GetInput)
 
-	ret, err := h.sslStore.Get(input.ID)
+	ret, err := h.sslStore.Get(c.Context(), input.ID)
 	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
 	//format respond
-	ssl := ret.(*entity.SSL)
+	ssl := &entity.SSL{}
+	err = utils.ObjectClone(ret, ssl)
+	if err != nil {
+		return handler.SpecCodeResponse(err), err
+	}
 	ssl.Key = ""
 	ssl.Keys = nil
 
@@ -97,10 +102,44 @@ type ListInput struct {
 	store.Pagination
 }
 
+// swagger:operation GET /apisix/admin/ssl getSSLList
+//
+// Return the SSL list according to the specified page number and page size, and can SSLs search by sni.
+//
+// ---
+// produces:
+// - application/json
+// parameters:
+// - name: page
+//   in: query
+//   description: page number
+//   required: false
+//   type: integer
+// - name: page_size
+//   in: query
+//   description: page size
+//   required: false
+//   type: integer
+// - name: sni
+//   in: query
+//   description: sni of SSL
+//   required: false
+//   type: string
+// responses:
+//   '0':
+//     description: list response
+//     schema:
+//       type: array
+//       items:
+//         "$ref": "#/definitions/ssl"
+//   default:
+//     description: unexpected error
+//     schema:
+//       "$ref": "#/definitions/ApiError"
 func (h *Handler) List(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*ListInput)
 
-	ret, err := h.sslStore.List(store.ListInput{
+	ret, err := h.sslStore.List(c.Context(), store.ListInput{
 		Predicate: func(obj interface{}) bool {
 			if input.SNI != "" {
 				if strings.Contains(obj.(*entity.SSL).Sni, input.SNI) {
@@ -125,9 +164,9 @@ func (h *Handler) List(c droplet.Context) (interface{}, error) {
 
 	//format respond
 	var list []interface{}
-	var ssl *entity.SSL
 	for _, item := range ret.Rows {
-		ssl = item.(*entity.SSL)
+		ssl := &entity.SSL{}
+		_ = utils.ObjectClone(item, ssl)
 		ssl.Key = ""
 		ssl.Keys = nil
 		list = append(list, ssl)
@@ -148,13 +187,15 @@ func (h *Handler) Create(c droplet.Context) (interface{}, error) {
 	}
 
 	ssl.ID = input.ID
+	ssl.Labels = input.Labels
 	//set default value for SSL status, if not set, it will be 0 which means disable.
 	ssl.Status = conf.SSLDefaultStatus
-	if err := h.sslStore.Create(c.Context(), ssl); err != nil {
+	ret, err := h.sslStore.Create(c.Context(), ssl)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }
 
 type UpdateInput struct {
@@ -164,6 +205,12 @@ type UpdateInput struct {
 
 func (h *Handler) Update(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*UpdateInput)
+
+	// check if ID in body is equal ID in path
+	if err := handler.IDCompare(input.ID, input.SSL.ID); err != nil {
+		return &data.SpecCodeResponse{StatusCode: http.StatusBadRequest}, err
+	}
+
 	ssl, err := ParseCert(input.Cert, input.Key)
 	if err != nil {
 		return &data.SpecCodeResponse{StatusCode: http.StatusBadRequest}, err
@@ -173,53 +220,48 @@ func (h *Handler) Update(c droplet.Context) (interface{}, error) {
 		ssl.ID = input.ID
 	}
 
+	if input.Labels != nil {
+		ssl.Labels = input.Labels
+	}
+
 	//set default value for SSL status, if not set, it will be 0 which means disable.
 	ssl.Status = conf.SSLDefaultStatus
-	if err := h.sslStore.Update(c.Context(), ssl, true); err != nil {
+	ret, err := h.sslStore.Update(c.Context(), ssl, true)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }
 
-func (h *Handler) Patch(c droplet.Context) (interface{}, error) {
-	input := c.Input().(*UpdateInput)
-	arr := strings.Split(input.ID, "/")
-	var subPath string
-	if len(arr) > 1 {
-		input.ID = arr[0]
-		subPath = arr[1]
-	}
+func Patch(c *gin.Context) (interface{}, error) {
+	reqBody, _ := c.GetRawData()
+	ID := c.Param("id")
+	subPath := c.Param("path")
 
-	stored, err := h.sslStore.Get(input.ID)
+	sslStore := store.GetStore(store.HubKeySsl)
+	stored, err := sslStore.Get(c, ID)
 	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	var patch jsonpatch.Patch
-	if subPath != "" {
-		patch = jsonpatch.Patch{
-			Operations: []jsonpatch.PatchOperation{
-				{Op: jsonpatch.Replace, Path: subPath, Value: c.Input()},
-			},
-		}
-	} else {
-		patch, err = jsonpatch.MakePatch(stored, input.SSL)
-		if err != nil {
-			return handler.SpecCodeResponse(err), err
-		}
-	}
-
-	err = patch.Apply(&stored)
+	res, err := utils.MergePatch(stored, subPath, reqBody)
 	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	if err := h.sslStore.Update(c.Context(), &stored, false); err != nil {
+	var ssl entity.SSL
+	err = json.Unmarshal(res, &ssl)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	ret, err := sslStore.Update(c, &ssl, false)
+	if err != nil {
+		return handler.SpecCodeResponse(err), err
+	}
+
+	return ret, nil
 }
 
 type BatchDelete struct {
@@ -299,6 +341,33 @@ func ParseCert(crt, key string) (*entity.SSL, error) {
 	return &ssl, nil
 }
 
+// swagger:operation POST /apisix/admin/check_ssl_cert checkSSL
+//
+// verify SSL cert and key.
+//
+// ---
+// produces:
+// - application/json
+// parameters:
+// - name: cert
+//   in: body
+//   description: cert of SSL
+//   required: true
+//   type: string
+// - name: key
+//   in: body
+//   description: key of SSL
+//   required: true
+//   type: string
+// responses:
+//   '0':
+//     description: SSL verify passed
+//     schema:
+//       "$ref": "#/definitions/ApiError"
+//   default:
+//     description: unexpected error
+//     schema:
+//       "$ref": "#/definitions/ApiError"
 func (h *Handler) Validate(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*entity.SSL)
 	ssl, err := ParseCert(input.Cert, input.Key)
@@ -354,6 +423,33 @@ func checkSniExists(rows []store.Row, sni string) bool {
 	return false
 }
 
+// swagger:operation POST /apisix/admin/check_ssl_exists checkSSLExist
+//
+// Check whether the SSL exists.
+//
+// ---
+// produces:
+// - application/json
+// parameters:
+// - name: cert
+//   in: body
+//   description: cert of SSL
+//   required: true
+//   type: string
+// - name: key
+//   in: body
+//   description: key of SSL
+//   required: true
+//   type: string
+// responses:
+//   '0':
+//     description: SSL exists
+//     schema:
+//       "$ref": "#/definitions/ApiError"
+//   default:
+//     description: unexpected error
+//     schema:
+//       "$ref": "#/definitions/ApiError"
 func Exist(c *gin.Context) (interface{}, error) {
 	//input := c.Input().(*ExistInput)
 	//temporary
@@ -364,7 +460,7 @@ func Exist(c *gin.Context) (interface{}, error) {
 	}
 
 	routeStore := store.GetStore(store.HubKeySsl)
-	ret, err := routeStore.List(store.ListInput{
+	ret, err := routeStore.List(c, store.ListInput{
 		Predicate:  nil,
 		PageSize:   0,
 		PageNumber: 0,

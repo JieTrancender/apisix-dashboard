@@ -34,6 +34,7 @@ declare namespace UpstreamModule {
         http_failures: number;
       };
       req_headers?: string[];
+      port?: number;
     };
     passive?: {
       healthy: {
@@ -81,5 +82,5 @@ declare namespace UpstreamModule {
   };
 
   // TODO: typing
-  type ResponseBody = {} & RequestBody;
+  type ResponseBody = Record<string, unknown> & RequestBody;
 }

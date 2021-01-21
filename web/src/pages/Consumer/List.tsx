@@ -16,13 +16,15 @@
  */
 import React, { useRef } from 'react';
 import { PageContainer } from '@ant-design/pro-layout';
-import ProTable, { ProColumns, ActionType } from '@ant-design/pro-table';
+import ProTable from '@ant-design/pro-table';
+import type { ProColumns, ActionType } from '@ant-design/pro-table';
 import { Popconfirm, Button, notification } from 'antd';
 import { history, useIntl } from 'umi';
 import { PlusOutlined } from '@ant-design/icons';
 
-import { fetchList, remove } from './service';
 import { timestampToLocaleString } from '@/helpers';
+
+import { fetchList, remove } from './service';
 
 const Page: React.FC = () => {
   const ref = useRef<ActionType>();
@@ -93,6 +95,10 @@ const Page: React.FC = () => {
         columns={columns}
         rowKey="id"
         request={fetchList}
+        search={{
+          searchText: formatMessage({ id: 'component.global.search' }),
+          resetText: formatMessage({ id: 'component.global.reset' }),
+        }}
         toolBarRender={() => [
           <Button type="primary" onClick={() => history.push(`/consumer/create`)}>
             <PlusOutlined />

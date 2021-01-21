@@ -137,7 +137,6 @@ func TestAPISIXJsonSchemaValidator_Validate(t *testing.T) {
 	err = validator.Validate(consumer3)
 	assert.NotNil(t, err)
 	assert.EqualError(t, err, "schema validate failed: (root): count is required")
-
 }
 
 func TestAPISIXJsonSchemaValidator_checkUpstream(t *testing.T) {
@@ -247,5 +246,235 @@ func TestAPISIXJsonSchemaValidator_checkUpstream(t *testing.T) {
 	err = validator.Validate(route5)
 	assert.NotNil(t, err)
 	assert.EqualError(t, err, "schema validate failed: (root): Does not match pattern '^((uri|server_name|server_addr|request_uri|remote_port|remote_addr|query_string|host|hostname)|arg_[0-9a-zA-z_-]+)$'")
+}
+
+func TestAPISIXJsonSchemaValidator_Plugin(t *testing.T) {
+	validator, err := NewAPISIXJsonSchemaValidator("main.route")
+	assert.Nil(t, err)
+
+	// validate plugin's schema which has no `properties` or empty `properties`
+	route := &entity.Route{}
+	reqBody := `{
+		"id": "1",
+		"uri": "/hello",
+		"plugins": {
+			"prometheus": {
+				"disable": false
+			},
+			"key-auth": {
+				"disable": true
+			}
+		}
+	}`
+	err = json.Unmarshal([]byte(reqBody), route)
+	assert.Nil(t, err)
+	err = validator.Validate(route)
+	assert.Nil(t, err)
+
+	// validate plugin's schema which use `oneOf`
+	reqBody = `{
+		"id": "1",
+		"uri": "/hello",
+		"plugins": {
+                        "ip-restriction": {
+                            "blacklist": [
+                                "127.0.0.0/24"
+                            ],
+                            "disable": true
+                        }
+		}
+	}`
+	err = json.Unmarshal([]byte(reqBody), route)
+	assert.Nil(t, err)
+	err = validator.Validate(route)
+	assert.Nil(t, err)
+
+	// validate plugin's schema with invalid type for `disable`
+	reqBody = `{
+		"id": "1",
+		"uri": "/hello",
+		"plugins": {
+                        "ip-restriction": {
+                            "blacklist": [
+                                "127.0.0.0/24"
+                            ],
+                            "disable": 1
+                        }
+		}
+	}`
+	err = json.Unmarshal([]byte(reqBody), route)
+	assert.Nil(t, err)
+	err = validator.Validate(route)
+	assert.Equal(t, fmt.Errorf("schema validate failed: (root): Must validate one and only one schema (oneOf)\n(root): Additional property disable is not allowed\ndisable: Invalid type. Expected: boolean, given: integer"), err)
+}
+
+func TestAPISIXJsonSchemaValidator_Route_checkRemoteAddr(t *testing.T) {
+	tests := []struct {
+		caseDesc        string
+		giveContent     string
+		wantNewErr      error
+		wantValidateErr error
+	}{
+		{
+			caseDesc: "correct remote_addr",
+			giveContent: `{
+				"id": "1",
+				"uri": "/*",
+				"upstream": {
+					"nodes": [{
+						"host": "127.0.0.1",
+						"port": 8080,
+						"weight": 1
+					}],
+					"type": "roundrobin"
+				},
+				"remote_addr": "127.0.0.1"
+			}`,
+		},
+		{
+			caseDesc: "correct remote_addr (CIDR)",
+			giveContent: `{
+				"id": "1",
+				"uri": "/*",
+				"upstream": {
+					"nodes": [{
+						"host": "127.0.0.1",
+						"port": 8080,
+						"weight": 1
+					}],
+					"type": "roundrobin"
+				},
+				"remote_addr": "192.168.1.0/24"
+			}`,
+		},
+		{
+			caseDesc: "invalid remote_addr",
+			giveContent: `{
+				"id": "1",
+				"uri": "/*",
+				"upstream": {
+					"nodes": [{
+						"host": "127.0.0.1",
+						"port": 8080,
+						"weight": 1
+					}],
+					"type": "roundrobin"
+				},
+				"remote_addr": "127.0.0."
+			}`,
+			wantValidateErr: fmt.Errorf("schema validate failed: remote_addr: Must validate at least one schema (anyOf)\nremote_addr: Does not match format 'ipv4'"),
+		},
+		{
+			caseDesc: "correct remote_addrs",
+			giveContent: `{
+				"id": "1",
+				"uri": "/*",
+				"upstream": {
+					"nodes": [{
+						"host": "127.0.0.1",
+						"port": 8080,
+						"weight": 1
+					}],
+					"type": "roundrobin"
+				},
+				"remote_addrs": ["127.0.0.1", "192.0.0.0/8", "::1", "fe80::1/64"]
+			}`,
+		},
+		{
+			caseDesc: "invalid remote_addrs",
+			giveContent: `{
+				"id": "1",
+				"uri": "/*",
+				"upstream": {
+					"nodes": [{
+						"host": "127.0.0.1",
+						"port": 8080,
+						"weight": 1
+					}],
+					"type": "roundrobin"
+				},
+				"remote_addrs": ["127.0.0.", "192.0.0.0/128", "::1"]
+			}`,
+			wantValidateErr: fmt.Errorf("schema validate failed: remote_addrs.0: Must validate at least one schema (anyOf)\nremote_addrs.0: Does not match format 'ipv4'\nremote_addrs.1: Must validate at least one schema (anyOf)\nremote_addrs.1: Does not match format 'ipv4'"),
+		},
+		{
+			caseDesc: "invalid remote_addrs (an empty string item)",
+			giveContent: `{
+				"id": "1",
+				"uri": "/*",
+				"upstream": {
+					"nodes": [{
+						"host": "127.0.0.1",
+						"port": 8080,
+						"weight": 1
+					}],
+					"type": "roundrobin"
+				},
+				"remote_addrs": [""]
+			}`,
+			wantValidateErr: fmt.Errorf("schema validate failed: remote_addrs.0: Must validate at least one schema (anyOf)\nremote_addrs.0: Does not match format 'ipv4'"),
+		},
+	}
+
+	// todo: add a test case for "remote_addr": ""
+
+	for _, tc := range tests {
+		validator, err := NewAPISIXJsonSchemaValidator("main.route")
+		if err != nil {
+			assert.Equal(t, tc.wantNewErr, err, tc.caseDesc)
+			continue
+		}
+		route := &entity.Route{}
+		err = json.Unmarshal([]byte(tc.giveContent), route)
+		assert.Nil(t, err, tc.caseDesc)
+
+		err = validator.Validate(route)
+		if tc.wantValidateErr == nil {
+			assert.Equal(t, nil, err, tc.caseDesc)
+			continue
+		}
+
+		assert.Equal(t, tc.wantValidateErr, err, tc.caseDesc)
+	}
+}
+
+func TestAPISIXSchemaValidator_Validate(t *testing.T) {
+	validator, err := NewAPISIXSchemaValidator("main.consumer")
+	assert.Nil(t, err)
+
+	// normal config, should pass
+	reqBody := `{
+		"id": "jack",
+		"username": "jack",
+		"plugins": {
+			"limit-count": {
+				"count": 2,
+				"time_window": 60,
+				"rejected_code": 503,
+				"key": "remote_addr"
+			}
+		},
+		"desc": "test description"
+	}`
+	err = validator.Validate([]byte(reqBody))
+	assert.Nil(t, err)
+
+	// config with non existent field, should be failed.
+	reqBody = `{
+		"username": "jack",
+		"not-exist": "val",
+		"plugins": {
+			"limit-count": {
+				"count": 2,
+				"time_window": 60,
+				"rejected_code": 503,
+				"key": "remote_addr"
+			}
+		},
+		"desc": "test description"
+	}`
+	err = validator.Validate([]byte(reqBody))
+	assert.NotNil(t, err)
+	assert.EqualError(t, err, "schema validate failed: (root): Additional property not-exist is not allowed")
 
 }

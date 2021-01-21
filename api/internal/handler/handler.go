@@ -14,16 +14,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// API doc of Manager API.
+//
+// Manager API directly operates ETCD and provides data management for Apache APISIX, provides APIs for Front-end or other clients.
+//
+// Terms Of Service:
+//     Schemes: http, https
+//     Host: 127.0.0.1
+//     License: Apache License 2.0 http://www.apache.org/licenses/LICENSE-2.0
+//
+//     Consumes:
+//     - application/json
+//     - application/xml
+//
+//     Produces:
+//     - application/json
+//     - application/xml
+//
+// swagger:meta
 package handler
 
 import (
-	"github.com/shiningrush/droplet"
-	"github.com/shiningrush/droplet/middleware"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shiningrush/droplet"
 	"github.com/shiningrush/droplet/data"
+	"github.com/shiningrush/droplet/middleware"
+
+	"github.com/apisix/manager-api/internal/utils"
 )
 
 type RegisterFactory func() (RouteRegister, error)
@@ -67,5 +88,19 @@ func (mw *ErrorTransformMiddleware) Handle(ctx droplet.Context) error {
 		}
 		return err
 	}
+	return nil
+}
+
+func IDCompare(idOnPath string, idOnBody interface{}) error {
+	idOnBodyStr, ok := idOnBody.(string)
+	if !ok {
+		idOnBodyStr = utils.InterfaceToString(idOnBody)
+	}
+
+	// check if id on path is == to id on body ONLY if both ids are valid
+	if idOnPath != "" && idOnBodyStr != "" && idOnBodyStr != idOnPath {
+		return fmt.Errorf("ID on path (%s) doesn't match ID on body (%s)", idOnPath, idOnBodyStr)
+	}
+
 	return nil
 }

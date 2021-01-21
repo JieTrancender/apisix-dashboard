@@ -149,7 +149,7 @@ const MatchingRulesView: React.FC<RouteModule.Step1PassProps> = ({
             </Space>
           ),
         },
-  ].filter(item => Object.keys(item).length)
+  ].filter((item) => Object.keys(item).length);
 
   const renderModal = () => (
     <Modal
@@ -169,7 +169,7 @@ const MatchingRulesView: React.FC<RouteModule.Step1PassProps> = ({
       cancelText={formatMessage({ id: 'component.global.cancel' })}
       destroyOnClose
     >
-      <Form form={modalForm} labelCol={{ span: 4 }}>
+      <Form form={modalForm} layout="vertical">
         <Form.Item
           label={formatMessage({ id: 'page.route.parameterPosition' })}
           name="position"
@@ -276,7 +276,7 @@ const MatchingRulesView: React.FC<RouteModule.Step1PassProps> = ({
         </Button>
       )}
       <Table key="table" bordered dataSource={advancedMatchingRules} columns={columns} />
-      {/* NOTE: tricky way, switch visible on Modal component will ocure error */}
+      {/* NOTE: tricky way, switch visible on Modal component will occur error */}
       {visible ? renderModal() : null}
     </PanelSection>
   );

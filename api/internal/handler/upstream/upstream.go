@@ -17,12 +17,14 @@
 package upstream
 
 import (
+	"net/http"
 	"reflect"
 	"strings"
 
 	"github.com/api7/go-jsonpatch"
 	"github.com/gin-gonic/gin"
 	"github.com/shiningrush/droplet"
+	"github.com/shiningrush/droplet/data"
 	"github.com/shiningrush/droplet/wrapper"
 	wgin "github.com/shiningrush/droplet/wrapper/gin"
 
@@ -69,7 +71,7 @@ type GetInput struct {
 func (h *Handler) Get(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*GetInput)
 
-	r, err := h.upstreamStore.Get(input.ID)
+	r, err := h.upstreamStore.Get(c.Context(), input.ID)
 	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
@@ -85,10 +87,44 @@ type ListInput struct {
 	store.Pagination
 }
 
+// swagger:operation GET /apisix/admin/upstreams getUpstreamList
+//
+// Return the upstream list according to the specified page number and page size, and can search upstreams by name.
+//
+// ---
+// produces:
+// - application/json
+// parameters:
+// - name: page
+//   in: query
+//   description: page number
+//   required: false
+//   type: integer
+// - name: page_size
+//   in: query
+//   description: page size
+//   required: false
+//   type: integer
+// - name: name
+//   in: query
+//   description: name of upstream
+//   required: false
+//   type: string
+// responses:
+//   '0':
+//     description: list response
+//     schema:
+//       type: array
+//       items:
+//         "$ref": "#/definitions/upstream"
+//   default:
+//     description: unexpected error
+//     schema:
+//       "$ref": "#/definitions/ApiError"
 func (h *Handler) List(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*ListInput)
 
-	ret, err := h.upstreamStore.List(store.ListInput{
+	ret, err := h.upstreamStore.List(c.Context(), store.ListInput{
 		Predicate: func(obj interface{}) bool {
 			if input.Name != "" {
 				return strings.Contains(obj.(*entity.Upstream).Name, input.Name)
@@ -113,11 +149,12 @@ func (h *Handler) List(c droplet.Context) (interface{}, error) {
 func (h *Handler) Create(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*entity.Upstream)
 
-	if err := h.upstreamStore.Create(c.Context(), input); err != nil {
+	ret, err := h.upstreamStore.Create(c.Context(), input)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }
 
 type UpdateInput struct {
@@ -127,15 +164,22 @@ type UpdateInput struct {
 
 func (h *Handler) Update(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*UpdateInput)
+
+	// check if ID in body is equal ID in path
+	if err := handler.IDCompare(input.ID, input.Upstream.ID); err != nil {
+		return &data.SpecCodeResponse{StatusCode: http.StatusBadRequest}, err
+	}
+
 	if input.ID != "" {
 		input.Upstream.ID = input.ID
 	}
 
-	if err := h.upstreamStore.Update(c.Context(), &input.Upstream, true); err != nil {
+	ret, err := h.upstreamStore.Update(c.Context(), &input.Upstream, true)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }
 
 type BatchDelete struct {
@@ -161,7 +205,7 @@ func (h *Handler) Patch(c droplet.Context) (interface{}, error) {
 		subPath = arr[1]
 	}
 
-	stored, err := h.upstreamStore.Get(input.ID)
+	stored, err := h.upstreamStore.Get(c.Context(), input.ID)
 	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
@@ -184,11 +228,12 @@ func (h *Handler) Patch(c droplet.Context) (interface{}, error) {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	if err := h.upstreamStore.Update(c.Context(), &stored, false); err != nil {
+	ret, err := h.upstreamStore.Update(c.Context(), &stored, false)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }
 
 type ExistInput struct {
@@ -211,7 +256,7 @@ func Exist(c *gin.Context) (interface{}, error) {
 	exclude := c.Query("exclude")
 	routeStore := store.GetStore(store.HubKeyUpstream)
 
-	ret, err := routeStore.List(store.ListInput{
+	ret, err := routeStore.List(c, store.ListInput{
 		Predicate:  nil,
 		PageSize:   0,
 		PageNumber: 0,
@@ -240,7 +285,7 @@ func Exist(c *gin.Context) (interface{}, error) {
 func listUpstreamNames(c *gin.Context) (interface{}, error) {
 	routeStore := store.GetStore(store.HubKeyUpstream)
 
-	ret, err := routeStore.List(store.ListInput{
+	ret, err := routeStore.List(c, store.ListInput{
 		Predicate:  nil,
 		PageSize:   0,
 		PageNumber: 0,

@@ -71,7 +71,7 @@ type GetInput struct {
 func (h *Handler) Get(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*GetInput)
 
-	r, err := h.serviceStore.Get(input.ID)
+	r, err := h.serviceStore.Get(c.Context(), input.ID)
 	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
@@ -89,10 +89,44 @@ type ListInput struct {
 	store.Pagination
 }
 
+// swagger:operation GET /apisix/admin/services getServiceList
+//
+// Return the service list according to the specified page number and page size, and can search services by name.
+//
+// ---
+// produces:
+// - application/json
+// parameters:
+// - name: page
+//   in: query
+//   description: page number
+//   required: false
+//   type: integer
+// - name: page_size
+//   in: query
+//   description: page size
+//   required: false
+//   type: integer
+// - name: name
+//   in: query
+//   description: name of service
+//   required: false
+//   type: string
+// responses:
+//   '0':
+//     description: list response
+//     schema:
+//       type: array
+//       items:
+//         "$ref": "#/definitions/service"
+//   default:
+//     description: unexpected error
+//     schema:
+//       "$ref": "#/definitions/ApiError"
 func (h *Handler) List(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*ListInput)
 
-	ret, err := h.serviceStore.List(store.ListInput{
+	ret, err := h.serviceStore.List(c.Context(), store.ListInput{
 		Predicate: func(obj interface{}) bool {
 			if input.Name != "" {
 				return strings.Contains(obj.(*entity.Service).Name, input.Name)
@@ -121,7 +155,7 @@ func (h *Handler) Create(c droplet.Context) (interface{}, error) {
 
 	if input.UpstreamID != nil {
 		upstreamID := utils.InterfaceToString(input.UpstreamID)
-		_, err := h.upstreamStore.Get(upstreamID)
+		_, err := h.upstreamStore.Get(c.Context(), upstreamID)
 		if err != nil {
 			if err == data.ErrNotFound {
 				return &data.SpecCodeResponse{StatusCode: http.StatusBadRequest},
@@ -131,11 +165,12 @@ func (h *Handler) Create(c droplet.Context) (interface{}, error) {
 		}
 	}
 
-	if err := h.serviceStore.Create(c.Context(), input); err != nil {
+	ret, err := h.serviceStore.Create(c.Context(), input)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }
 
 type UpdateInput struct {
@@ -145,13 +180,19 @@ type UpdateInput struct {
 
 func (h *Handler) Update(c droplet.Context) (interface{}, error) {
 	input := c.Input().(*UpdateInput)
+
+	// check if ID in body is equal ID in path
+	if err := handler.IDCompare(input.ID, input.Service.ID); err != nil {
+		return &data.SpecCodeResponse{StatusCode: http.StatusBadRequest}, err
+	}
+
 	if input.ID != "" {
 		input.Service.ID = input.ID
 	}
 
 	if input.UpstreamID != nil {
 		upstreamID := utils.InterfaceToString(input.UpstreamID)
-		_, err := h.upstreamStore.Get(upstreamID)
+		_, err := h.upstreamStore.Get(c.Context(), upstreamID)
 		if err != nil {
 			if err == data.ErrNotFound {
 				return &data.SpecCodeResponse{StatusCode: http.StatusBadRequest},
@@ -161,11 +202,12 @@ func (h *Handler) Update(c droplet.Context) (interface{}, error) {
 		}
 	}
 
-	if err := h.serviceStore.Update(c.Context(), &input.Service, true); err != nil {
+	ret, err := h.serviceStore.Update(c.Context(), &input.Service, true)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }
 
 type BatchDelete struct {
@@ -191,7 +233,7 @@ func (h *Handler) Patch(c droplet.Context) (interface{}, error) {
 		subPath = arr[1]
 	}
 
-	stored, err := h.serviceStore.Get(input.ID)
+	stored, err := h.serviceStore.Get(c.Context(), input.ID)
 	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
@@ -214,9 +256,10 @@ func (h *Handler) Patch(c droplet.Context) (interface{}, error) {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	if err := h.serviceStore.Update(c.Context(), &stored, false); err != nil {
+	ret, err := h.serviceStore.Update(c.Context(), &stored, false)
+	if err != nil {
 		return handler.SpecCodeResponse(err), err
 	}
 
-	return nil, nil
+	return ret, nil
 }

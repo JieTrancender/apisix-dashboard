@@ -27,7 +27,7 @@ import (
 	"github.com/shiningrush/droplet/data"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apisix/manager-api/conf"
+	"github.com/apisix/manager-api/internal/conf"
 	"github.com/apisix/manager-api/internal/core/entity"
 	"github.com/apisix/manager-api/internal/core/storage"
 	"github.com/apisix/manager-api/internal/core/store"
@@ -59,6 +59,7 @@ func TestRoute(t *testing.T) {
 	  "vars": [],
 	  "remote_addrs": ["127.0.0.0/8"],
 	  "methods": ["PUT", "GET"],
+	  "status": 1,
 	  "upstream": {
 	      "type": "roundrobin",
 	      "nodes": [{
@@ -390,8 +391,12 @@ func TestRoute(t *testing.T) {
 	err = json.Unmarshal([]byte(reqBody), route)
 	assert.Nil(t, err)
 	ctx.SetInput(route)
-	_, err = handler.Create(ctx)
+	ret, err := handler.Create(ctx)
 	assert.Nil(t, err)
+	// check the returned valued
+	objRet, ok := ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, "1", objRet.ID)
 
 	//sleep
 	time.Sleep(time.Duration(100) * time.Millisecond)
@@ -400,7 +405,7 @@ func TestRoute(t *testing.T) {
 	input := &GetInput{}
 	input.ID = "1"
 	ctx.SetInput(input)
-	ret, err := handler.Get(ctx)
+	ret, err = handler.Get(ctx)
 	stored := ret.(*entity.Route)
 	assert.Nil(t, err)
 	assert.Equal(t, stored.ID, route.ID)
@@ -415,6 +420,11 @@ func TestRoute(t *testing.T) {
 	  "hosts": ["foo.com", "*.bar.com"],
 	  "remote_addrs": ["127.0.0.0/8"],
 	  "methods": ["PUT", "GET"],
+	  "status": 1,
+	  "labels": {
+	      "l1": "v1",
+	      "l2": "v2"
+      },
 	  "upstream": {
 	      "type": "roundrobin",
 	      "nodes": [{
@@ -747,8 +757,101 @@ func TestRoute(t *testing.T) {
 	err = json.Unmarshal([]byte(reqBody), route2)
 	assert.Nil(t, err)
 	ctx.SetInput(route2)
-	_, err = handler.Update(ctx)
+	ret, err = handler.Update(ctx)
 	assert.Nil(t, err)
+	// check the returned value
+	objRet, ok = ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, route2.ID, objRet.ID)
+	assert.Equal(t, route2.Labels, objRet.Labels)
+
+	//sleep
+	time.Sleep(time.Duration(100) * time.Millisecond)
+
+	// check ID discrepancy on Update
+
+	// Fail: test the string body id value != string route id value
+	errRoute := &UpdateInput{}
+	errRoute.ID = "2"
+	err = json.Unmarshal([]byte(reqBody), errRoute)
+	assert.Nil(t, err)
+	ctx.SetInput(errRoute)
+	ret, err = handler.Update(ctx)
+	assert.NotNil(t, err)
+	assert.EqualError(t, err, "ID on path (2) doesn't match ID on body (1)")
+	assert.Equal(t, http.StatusBadRequest, ret.(*data.SpecCodeResponse).StatusCode)
+
+	// Fail: tests the float body id value != string route id value
+	reqBodyErr := `{
+		"id": 1,
+		"uri": "/index.html",
+		"upstream": {
+			"type": "roundrobin",
+			"nodes": [{
+				"host": "www.a.com",
+				"port": 80,
+				"weight": 1
+			}]
+		}
+	}`
+	errRoute = &UpdateInput{}
+	errRoute.ID = "2"
+	err = json.Unmarshal([]byte(reqBodyErr), errRoute)
+	assert.Nil(t, err)
+	ctx.SetInput(errRoute)
+	ret, err = handler.Update(ctx)
+	assert.NotNil(t, err)
+	assert.EqualError(t, err, "ID on path (2) doesn't match ID on body (1)")
+	assert.Equal(t, http.StatusBadRequest, ret.(*data.SpecCodeResponse).StatusCode)
+
+	// Success: tests the float body id value is == string route id value
+	reqBodyErr = `{
+		"id": 10,
+		"uri": "/index.html",
+		"upstream": {
+			"type": "roundrobin",
+			"nodes": [{
+				"host": "www.a.com",
+				"port": 80,
+				"weight": 1
+			}]
+		}
+	}`
+	errRoute = &UpdateInput{}
+	errRoute.ID = "10"
+	err = json.Unmarshal([]byte(reqBodyErr), errRoute)
+	assert.Nil(t, err)
+	ctx.SetInput(errRoute)
+	ret, err = handler.Update(ctx)
+	assert.Nil(t, err)
+	// Check the returned value
+	objRet, ok = ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, errRoute.ID, objRet.ID)
+
+	// Success: tests the Body ID can be nil
+	reqBodyErr = `{
+		"uri": "/index.html",
+		"upstream": {
+			"type": "roundrobin",
+			"nodes": [{
+				"host": "www.a.com",
+				"port": 80,
+				"weight": 1
+			}]
+		}
+	}`
+	errRoute = &UpdateInput{}
+	errRoute.ID = "r1"
+	err = json.Unmarshal([]byte(reqBodyErr), errRoute)
+	assert.Nil(t, err)
+	ctx.SetInput(errRoute)
+	ret, err = handler.Update(ctx)
+	assert.Nil(t, err)
+	// Check the returned value
+	objRet, ok = ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, errRoute.ID, objRet.ID)
 
 	//sleep
 	time.Sleep(time.Duration(100) * time.Millisecond)
@@ -765,37 +868,161 @@ func TestRoute(t *testing.T) {
 	assert.Equal(t, len(dataPage.Rows), 1)
 
 	//list search match
-	listInput2 := &ListInput{}
+	listInput = &ListInput{}
 	reqBody = `{"page_size": 1, "page": 1, "name": "a", "uri": "index"}`
-	err = json.Unmarshal([]byte(reqBody), listInput2)
+	err = json.Unmarshal([]byte(reqBody), listInput)
 	assert.Nil(t, err)
-	ctx.SetInput(listInput2)
+	ctx.SetInput(listInput)
 	retPage, err = handler.List(ctx)
 	assert.Nil(t, err)
 	dataPage = retPage.(*store.ListOutput)
 	assert.Equal(t, len(dataPage.Rows), 1)
 
 	//list search name not match
-	listInput3 := &ListInput{}
+	listInput = &ListInput{}
 	reqBody = `{"page_size": 1, "page": 1, "name": "not-exists", "uri": "index"}`
-	err = json.Unmarshal([]byte(reqBody), listInput3)
+	err = json.Unmarshal([]byte(reqBody), listInput)
 	assert.Nil(t, err)
-	ctx.SetInput(listInput3)
+	ctx.SetInput(listInput)
 	retPage, err = handler.List(ctx)
 	assert.Nil(t, err)
 	dataPage = retPage.(*store.ListOutput)
 	assert.Equal(t, len(dataPage.Rows), 0)
 
 	//list search uri not match
-	listInput4 := &ListInput{}
+	listInput = &ListInput{}
 	reqBody = `{"page_size": 1, "page": 1, "name": "a", "uri": "not-exists"}`
-	err = json.Unmarshal([]byte(reqBody), listInput4)
+	err = json.Unmarshal([]byte(reqBody), listInput)
 	assert.Nil(t, err)
-	ctx.SetInput(listInput4)
+	ctx.SetInput(listInput)
 	retPage, err = handler.List(ctx)
 	assert.Nil(t, err)
 	dataPage = retPage.(*store.ListOutput)
 	assert.Equal(t, len(dataPage.Rows), 0)
+
+	//list search label not match
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "label":"l3"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 0)
+
+	//list search label match
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "label":"l1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
+
+	//list search label match
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "label":"l1:v1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
+
+	//list search and label not match
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "label":"l1:v2"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 0)
+
+	// list search and status match
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "status": "1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
+
+	// sleep
+	time.Sleep(time.Duration(100) * time.Millisecond)
+
+	// list search and status not match
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "name": "a", "status": "0"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 0)
+
+	//list search with name and status
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "name": "a", "status": "1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
+
+	//list search with name and label
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "name": "a", "label":"l1:v1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
+
+	//list search with uri and label
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "uri": "index", "label":"l1:v1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
+
+	//list search with uri,name and label
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "name": "a", "uri": "index", "label":"l1:v1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
+
+	//list search with uri,name, status and label
+	listInput = &ListInput{}
+	reqBody = `{"page_size": 1, "page": 1, "name": "a", "status": "1", "uri": "index", "label":"l1:v1"}`
+	err = json.Unmarshal([]byte(reqBody), listInput)
+	assert.Nil(t, err)
+	ctx.SetInput(listInput)
+	retPage, err = handler.List(ctx)
+	assert.Nil(t, err)
+	dataPage = retPage.(*store.ListOutput)
+	assert.Equal(t, len(dataPage.Rows), 1)
 
 	//create route using uris
 	route3 := &entity.Route{}
@@ -814,18 +1041,21 @@ func TestRoute(t *testing.T) {
 	err = json.Unmarshal([]byte(reqBody), route3)
 	assert.Nil(t, err)
 	ctx.SetInput(route3)
-	_, err = handler.Create(ctx)
+	ret, err = handler.Create(ctx)
 	assert.Nil(t, err)
+	objRet, ok = ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, "2", objRet.ID)
 
 	//sleep
 	time.Sleep(time.Duration(100) * time.Millisecond)
 
 	//list search match uris
-	listInput5 := &ListInput{}
+	listInput = &ListInput{}
 	reqBody = `{"page_size": 1, "page": 1, "name": "bbb", "uri": "bb"}`
-	err = json.Unmarshal([]byte(reqBody), listInput5)
+	err = json.Unmarshal([]byte(reqBody), listInput)
 	assert.Nil(t, err)
-	ctx.SetInput(listInput5)
+	ctx.SetInput(listInput)
 	retPage, err = handler.List(ctx)
 	assert.Nil(t, err)
 	dataPage = retPage.(*store.ListOutput)
@@ -943,8 +1173,11 @@ func TestRoute(t *testing.T) {
 	err = json.Unmarshal([]byte(reqBody), route11)
 	assert.Nil(t, err)
 	ctx.SetInput(route11)
-	_, err = handler.Create(ctx)
+	ret, err = handler.Create(ctx)
 	assert.Nil(t, err)
+	objRet, ok = ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, "11", objRet.ID)
 
 	//sleep
 	time.Sleep(time.Duration(100) * time.Millisecond)
@@ -959,20 +1192,20 @@ func TestRoute(t *testing.T) {
 	assert.Equal(t, "11", stored.ID)
 
 	//list
-	listInput11 := &ListInput{}
+	listInput = &ListInput{}
 	reqBody = `{"page_size": 10, "page": 1}`
-	err = json.Unmarshal([]byte(reqBody), listInput11)
+	err = json.Unmarshal([]byte(reqBody), listInput)
 	assert.Nil(t, err)
-	ctx.SetInput(listInput11)
+	ctx.SetInput(listInput)
 	_, err = handler.List(ctx)
 	assert.Nil(t, err)
 
 	//list search match
-	listInput12 := &ListInput{}
+	listInput = &ListInput{}
 	reqBody = `{"page_size": 1, "page": 1,  "uri": "r11"}`
-	err = json.Unmarshal([]byte(reqBody), listInput12)
+	err = json.Unmarshal([]byte(reqBody), listInput)
 	assert.Nil(t, err)
-	ctx.SetInput(listInput12)
+	ctx.SetInput(listInput)
 	retPage, err = handler.List(ctx)
 	assert.Nil(t, err)
 	dataPage = retPage.(*store.ListOutput)
@@ -985,10 +1218,9 @@ func TestRoute(t *testing.T) {
 	ctx.SetInput(inputDel)
 	_, err = handler.BatchDelete(ctx)
 	assert.Nil(t, err)
-
 }
 
-func Test_Route_With_Script(t *testing.T) {
+func Test_Route_With_Script_Dag2lua(t *testing.T) {
 	// init
 	err := storage.InitETCDClient(conf.ETCDConfig)
 	assert.Nil(t, err)
@@ -1079,8 +1311,11 @@ func Test_Route_With_Script(t *testing.T) {
 	err = json.Unmarshal([]byte(reqBody), route)
 	assert.Nil(t, err)
 	ctx.SetInput(route)
-	_, err = handler.Create(ctx)
+	ret, err := handler.Create(ctx)
 	assert.Nil(t, err)
+	objRet, ok := ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, "1", objRet.ID)
 
 	//sleep
 	time.Sleep(time.Duration(20) * time.Millisecond)
@@ -1089,7 +1324,7 @@ func Test_Route_With_Script(t *testing.T) {
 	input := &GetInput{}
 	input.ID = "1"
 	ctx.SetInput(input)
-	ret, err := handler.Get(ctx)
+	ret, err = handler.Get(ctx)
 	stored := ret.(*entity.Route)
 	assert.Nil(t, err)
 	assert.Equal(t, stored.ID, route.ID)
@@ -1115,8 +1350,14 @@ func Test_Route_With_Script(t *testing.T) {
 	err = json.Unmarshal([]byte(reqBody), route2)
 	assert.Nil(t, err)
 	ctx.SetInput(route2)
-	_, err = handler.Update(ctx)
+	ret, err = handler.Update(ctx)
 	assert.Nil(t, err)
+	// check the returned value
+	objRet, ok = ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, route2.ID, objRet.ID)
+	// script returned should be nil
+	assert.Nil(t, objRet.Script)
 
 	//sleep
 	time.Sleep(time.Duration(100) * time.Millisecond)
@@ -1130,4 +1371,164 @@ func Test_Route_With_Script(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, stored.ID, route.ID)
 	assert.Nil(t, stored.Script)
+
+	//delete test data
+	inputDel := &BatchDelete{}
+	reqBody = `{"ids": "1"}`
+	err = json.Unmarshal([]byte(reqBody), inputDel)
+	assert.Nil(t, err)
+	ctx.SetInput(inputDel)
+	_, err = handler.BatchDelete(ctx)
+	assert.Nil(t, err)
+}
+
+func Test_Route_With_Script_Luacode(t *testing.T) {
+	// init
+	err := storage.InitETCDClient(conf.ETCDConfig)
+	assert.Nil(t, err)
+	err = store.InitStores()
+	assert.Nil(t, err)
+
+	handler := &Handler{
+		routeStore:    store.GetStore(store.HubKeyRoute),
+		svcStore:      store.GetStore(store.HubKeyService),
+		upstreamStore: store.GetStore(store.HubKeyUpstream),
+		scriptStore:   store.GetStore(store.HubKeyScript),
+	}
+	assert.NotNil(t, handler)
+
+	// create with script of valid lua syntax
+	ctx := droplet.NewContext()
+	route := &entity.Route{}
+	reqBody := `{
+		"id": "1",
+		"uri": "/index.html",
+		"upstream": {
+			"type": "roundrobin",
+			"nodes": [{
+				"host": "www.a.com",
+				"port": 80,
+				"weight": 1
+			}]
+		},
+		"script": "local _M = {} \n function _M.access(api_ctx) \n ngx.log(ngx.WARN,\"hit access phase\") \n end \nreturn _M"
+	}`
+	err = json.Unmarshal([]byte(reqBody), route)
+	assert.Nil(t, err)
+	ctx.SetInput(route)
+	_, err = handler.Create(ctx)
+	assert.Nil(t, err)
+
+	// sleep
+	time.Sleep(time.Duration(20) * time.Millisecond)
+
+	// get
+	input := &GetInput{}
+	input.ID = "1"
+	ctx.SetInput(input)
+	ret, err := handler.Get(ctx)
+	stored := ret.(*entity.Route)
+	assert.Nil(t, err)
+	assert.Equal(t, stored.ID, route.ID)
+	assert.Equal(t, "local _M = {} \n function _M.access(api_ctx) \n ngx.log(ngx.WARN,\"hit access phase\") \n end \nreturn _M", stored.Script)
+
+	// update via empty script
+	route2 := &UpdateInput{}
+	route2.ID = "1"
+	reqBody = `{
+		"id": "1",
+		"uri": "/index.html",
+		"enable_websocket": true,
+		"upstream": {
+			"type": "roundrobin",
+			"nodes": [{
+				"host": "www.a.com",
+				"port": 80,
+				"weight": 1
+			}]
+		}
+	}`
+
+	err = json.Unmarshal([]byte(reqBody), route2)
+	assert.Nil(t, err)
+	ctx.SetInput(route2)
+	ret, err = handler.Update(ctx)
+	assert.Nil(t, err)
+	// check the returned value
+	objRet, ok := ret.(*entity.Route)
+	assert.True(t, ok)
+	assert.Equal(t, route2.ID, objRet.ID)
+	// script returned should be nil
+	assert.Nil(t, objRet.Script)
+
+	//sleep
+	time.Sleep(time.Duration(100) * time.Millisecond)
+
+	//get, script should be nil
+	input = &GetInput{}
+	input.ID = "1"
+	ctx.SetInput(input)
+	ret, err = handler.Get(ctx)
+	stored = ret.(*entity.Route)
+	assert.Nil(t, err)
+	assert.Equal(t, stored.ID, route.ID)
+	assert.Nil(t, stored.Script)
+
+	// 2nd update via invalid script
+	input3 := &UpdateInput{}
+	input3.ID = "1"
+	reqBody = `{
+		"id": "1",
+		"uri": "/index.html",
+		"enable_websocket": true,
+		"upstream": {
+			"type": "roundrobin",
+			"nodes": [{
+				"host": "www.a.com",
+				"port": 80,
+				"weight": 1
+			}]
+		},
+		"script": "local _M = {} \n function _M.access(api_ctx) \n ngx.log(ngx.WARN,\"hit access phase\")"
+	}`
+
+	err = json.Unmarshal([]byte(reqBody), input3)
+	assert.Nil(t, err)
+	ctx.SetInput(input3)
+	_, err = handler.Update(ctx)
+	// err should NOT be nil
+	assert.NotNil(t, err)
+
+	// delete test data
+	inputDel := &BatchDelete{}
+	reqBody = `{"ids": "1"}`
+	err = json.Unmarshal([]byte(reqBody), inputDel)
+	assert.Nil(t, err)
+	ctx.SetInput(inputDel)
+	_, err = handler.BatchDelete(ctx)
+	assert.Nil(t, err)
+
+	// 2nd create with script of invalid lua syntax
+	ctx = droplet.NewContext()
+	route = &entity.Route{}
+	reqBody = `{
+		"id": "1",
+		"uri": "/index.html",
+		"upstream": {
+			"type": "roundrobin",
+			"nodes": [{
+				"host": "www.a.com",
+				"port": 80,
+				"weight": 1
+			}]
+		},
+		"script": "local _M = {} \n function _M.access(api_ctx) \n ngx.log(ngx.WARN,\"hit access phase\")"
+	}`
+	err = json.Unmarshal([]byte(reqBody), route)
+	assert.Nil(t, err)
+	ctx.SetInput(route)
+	ret, err = handler.Create(ctx)
+	assert.NotNil(t, err)
+	assert.EqualError(t, err, "<string> at EOF:   syntax error\n")
+	assert.Equal(t, http.StatusBadRequest, ret.(*data.SpecCodeResponse).StatusCode)
 }

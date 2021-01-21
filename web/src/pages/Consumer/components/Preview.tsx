@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 import React from 'react';
-import { FormInstance } from 'antd/lib/form';
-import { PluginPage, PluginPageType } from '@api7-dashboard/plugin';
+import type { FormInstance } from 'antd/lib/form';
 
+import PluginPage from '@/components/Plugin';
 import Step1 from './Step1';
 
 type Props = {
   form1: FormInstance;
-  plugins: PluginPageType.FinalData;
+  plugins: PluginComponent.Data;
 };
 
 const Page: React.FC<Props> = ({ form1, plugins }) => {

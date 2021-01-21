@@ -20,13 +20,13 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/apisix/manager-api/log"
+	"github.com/apisix/manager-api/internal/log"
 )
 
 func mapKV2Node(key string, val float64) (*Node, error) {
 	host, port, err := net.SplitHostPort(key)
 	if err != nil {
-		log.Warn("split host port fail: %s", err)
+		log.Errorf("split host port fail: %s", err)
 		return nil, err
 	}
 
